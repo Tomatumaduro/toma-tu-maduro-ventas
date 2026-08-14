@@ -44,6 +44,10 @@ class Connection:
         return self.raw.execute(self._sql(statement), params)
 
     def executemany(self, statement, params):
+        if self.postgres:
+            with self.raw.cursor() as cursor:
+                cursor.executemany(self._sql(statement), params)
+            return None
         return self.raw.executemany(self._sql(statement), params)
 
     def __enter__(self):
