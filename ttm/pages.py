@@ -1,9 +1,8 @@
-import sqlite3
 import pandas as pd
 import streamlit as st
 
 from .auth import create_user, set_user_active
-from .database import connect
+from .database import connect, is_integrity_error
 from .parser import parse_smartcorp_pdf
 
 
@@ -12,7 +11,8 @@ DAY_NAMES = {0:"lunes",1:"martes",2:"miércoles",3:"jueves",4:"viernes",5:"sába
 
 def _sales_df():
     with connect() as con:
-        df = pd.read_sql_query("SELECT * FROM daily_sales ORDER BY sale_date", con)
+        rows = con.execute("SELECT * FROM daily_sales ORDER BY sale_date").fetchall()
+        df = pd.DataFrame([dict(row) for row in rows])
     if not df.empty:
         df["sale_date"] = pd.to_datetime(df["sale_date"])
         df["día"] = df["sale_date"].dt.dayofweek.map(DAY_NAMES)
@@ -61,7 +61,8 @@ def render_upload():
             products = row.pop("products")
             cols = list(row)
             with connect() as con:
-                con.execute(f"INSERT OR REPLACE INTO daily_sales ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)})", tuple(row.values()))
+                updates = ",".join(f"{col}=excluded.{col}" for col in cols if col != "sale_date")
+                con.execute(f"INSERT INTO daily_sales ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)}) ON CONFLICT(sale_date) DO UPDATE SET {updates}", tuple(row.values()))
                 con.execute("DELETE FROM product_sales WHERE sale_date=?", (row["sale_date"],))
                 con.executemany("INSERT INTO product_sales(sale_date,product_raw,product_name,channel,quantity,source_file) VALUES(?,?,?,?,?,?)", [(row["sale_date"],p["product_raw"],p["product_name"],p["channel"],p["quantity"],file.name) for p in products])
             imported = 1
@@ -85,8 +86,13 @@ def render_admin():
                 raise ValueError("Usuario mínimo 3 caracteres; contraseña mínimo 8.")
             create_user(username, password, role)
             st.success("Usuario creado.")
-        except (sqlite3.IntegrityError, ValueError) as exc:
-            st.error(str(exc) if isinstance(exc, ValueError) else "Ese usuario ya existe.")
+        except Exception as exc:
+            if isinstance(exc, ValueError):
+                st.error(str(exc))
+            elif is_integrity_error(exc):
+                st.error("Ese usuario ya existe.")
+            else:
+                st.error("No se pudo crear el usuario.")
     with connect() as con:
         users = con.execute("SELECT id,username,role,active,created_at FROM users ORDER BY username").fetchall()
     st.subheader("Usuarios")

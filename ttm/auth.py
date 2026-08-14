@@ -1,6 +1,5 @@
 import hashlib
 import hmac
-import os
 import secrets
 import streamlit as st
 
@@ -21,7 +20,7 @@ def _verify(password, stored):
 
 def bootstrap_admin():
     with connect() as con:
-        count = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        count = con.execute("SELECT COUNT(*) AS total FROM users").fetchone()["total"]
     if count:
         return False
     st.markdown('<h1 class="ttm-title">Configurar Toma Tu Maduro</h1>', unsafe_allow_html=True)
@@ -38,7 +37,7 @@ def bootstrap_admin():
             st.error("Las contraseñas no coinciden.")
         else:
             with connect() as con:
-                con.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (username.strip(), _hash_password(password), "admin"))
+                con.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (username.strip().lower(), _hash_password(password), "admin"))
             st.success("Administrador creado. Recarga para iniciar sesión.")
     return True
 
@@ -56,7 +55,7 @@ def login():
         submitted = st.form_submit_button("Ingresar", use_container_width=True)
     if submitted:
         with connect() as con:
-            row = con.execute("SELECT * FROM users WHERE username=? AND active=1", (username.strip(),)).fetchone()
+            row = con.execute("SELECT * FROM users WHERE username=? AND active=1", (username.strip().lower(),)).fetchone()
         if row and _verify(password, row["password_hash"]):
             st.session_state.user = {"id": row["id"], "username": row["username"], "role": row["role"]}
             st.rerun()
@@ -70,7 +69,7 @@ def logout():
 
 def create_user(username, password, role):
     with connect() as con:
-        con.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (username.strip(), _hash_password(password), role))
+        con.execute("INSERT INTO users(username,password_hash,role) VALUES(?,?,?)", (username.strip().lower(), _hash_password(password), role))
 
 
 def set_user_active(user_id, active):
