@@ -59,6 +59,17 @@ def render_upload():
         try:
             row = parse_smartcorp_pdf(file.getvalue(), file.name)
             products = row.pop("products")
+            # Un producto puede aparecer en varias secciones del mismo cierre.
+            # Se consolida antes de insertarlo porque la tabla guarda una sola
+            # fila por fecha y texto original del producto.
+            consolidated_products = {}
+            for product in products:
+                key = product["product_raw"]
+                if key in consolidated_products:
+                    consolidated_products[key]["quantity"] += product["quantity"]
+                else:
+                    consolidated_products[key] = product.copy()
+            products = list(consolidated_products.values())
             cols = list(row)
             with connect() as con:
                 updates = ",".join(f"{col}=excluded.{col}" for col in cols if col != "sale_date")
