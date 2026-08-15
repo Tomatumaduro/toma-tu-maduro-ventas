@@ -75,7 +75,17 @@ def render_upload():
                 updates = ",".join(f"{col}=excluded.{col}" for col in cols if col != "sale_date")
                 con.execute(f"INSERT INTO daily_sales ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)}) ON CONFLICT(sale_date) DO UPDATE SET {updates}", tuple(row.values()))
                 con.execute("DELETE FROM product_sales WHERE sale_date=?", (row["sale_date"],))
-                con.executemany("INSERT INTO product_sales(sale_date,product_raw,product_name,channel,quantity,source_file) VALUES(?,?,?,?,?,?)", [(row["sale_date"],p["product_raw"],p["product_name"],p["channel"],p["quantity"],file.name) for p in products])
+                con.executemany(
+                    """INSERT INTO product_sales(
+                           sale_date,product_raw,product_name,channel,quantity,source_file
+                       ) VALUES(?,?,?,?,?,?)
+                       ON CONFLICT(sale_date,product_raw) DO UPDATE SET
+                           quantity=product_sales.quantity + excluded.quantity,
+                           product_name=excluded.product_name,
+                           channel=excluded.channel,
+                           source_file=excluded.source_file""",
+                    [(row["sale_date"],p["product_raw"],p["product_name"],p["channel"],p["quantity"],file.name) for p in products],
+                )
             imported = 1
             st.success(f"Reporte del {row['sale_date']} cargado correctamente: ${row['total_sales']:,.2f} y {row['tickets']} tickets.")
         except Exception as exc:
