@@ -26,6 +26,14 @@ def _sales_df():
         df = pd.DataFrame([dict(row) for row in rows])
     if not df.empty:
         df["sale_date"] = pd.to_datetime(df["sale_date"])
+        numeric_columns = [
+            "total_sales", "local_sales", "delivery_sales", "tickets",
+            "local_tickets", "delivery_tickets", "cash", "card", "transfer",
+            "pedidos_ya", "uber_eats", "rappi", "other_delivery",
+        ]
+        for col in numeric_columns:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
         df["día"] = df["sale_date"].dt.dayofweek.map(DAY_NAMES)
         df["ticket_promedio"] = df["total_sales"].div(df["tickets"].replace(0, pd.NA))
     return df
@@ -213,6 +221,8 @@ def render_profit_loss():
     with connect() as con:
         manual_rows = con.execute("SELECT expense_date,category,description,amount FROM expenses ORDER BY expense_date").fetchall()
     manual = pd.DataFrame([dict(row) for row in manual_rows])
+    if not manual.empty:
+        manual["amount"] = pd.to_numeric(manual["amount"], errors="coerce").fillna(0.0)
     dates = []
     if not sales.empty: dates += sales.sale_date.dt.date.tolist()
     if not invoices.empty: dates += invoices.invoice_date.dropna().dt.date.tolist()
@@ -246,6 +256,7 @@ def render_profit_loss():
         all_manual = pd.DataFrame([dict(row) for row in manual_rows])
         if not all_manual.empty:
             all_manual["expense_date"] = pd.to_datetime(all_manual.expense_date)
+            all_manual["amount"] = pd.to_numeric(all_manual["amount"], errors="coerce").fillna(0.0)
             previous_expenses += float(all_manual[(all_manual.expense_date.dt.date >= previous_start) & (all_manual.expense_date.dt.date <= previous_end)].amount.sum())
     previous_profit = previous_income - previous_expenses
     cols = st.columns(4)
@@ -277,10 +288,14 @@ def render_profit_loss():
         all_manual = pd.DataFrame([dict(row) for row in manual_rows])
         if not all_manual.empty:
             all_manual["expense_date"] = pd.to_datetime(all_manual.expense_date)
+            all_manual["amount"] = pd.to_numeric(all_manual["amount"], errors="coerce").fillna(0.0)
             manual_month = all_manual.assign(Mes=all_manual.expense_date.dt.to_period("M").astype(str)).groupby("Mes", as_index=False).amount.sum().rename(columns={"amount":"Gastos_manuales"})
             monthly_parts.append(manual_month.set_index("Mes"))
     if monthly_parts:
         monthly = pd.concat(monthly_parts, axis=1).fillna(0).reset_index()
+        for col in ["Ingresos", "Gastos_facturas", "Gastos_manuales"]:
+            if col in monthly.columns:
+                monthly[col] = pd.to_numeric(monthly[col], errors="coerce").fillna(0.0)
         monthly["Gastos"] = monthly.get("Gastos_facturas", 0) + monthly.get("Gastos_manuales", 0)
         monthly["Utilidad"] = monthly.get("Ingresos", 0) - monthly["Gastos"]
         st.subheader("Historial mensual")
