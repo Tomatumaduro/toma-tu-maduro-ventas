@@ -1,33 +1,24 @@
-# Toma Tu Maduro - Evolutivo comercial
+# Toma Tu Maduro — ventas y P&G
 
-Primera etapa de la aplicación: usuarios, carga de cierres diarios SMARTCORP y dashboard de ventas local/delivery.
+Aplicación Streamlit para conservar el histórico comercial y consultar el estado de pérdidas y ganancias por el periodo elegido.
 
-## Ejecutar
+## Funciones principales
 
-```bash
-python -m pip install -r requirements.txt
-streamlit run app.py
-```
+- Usuarios administradores y usuarios de consulta.
+- Carga de cierres diarios SMARTCORP en PDF.
+- Carga del reporte mensual SMARTCORP en Excel (`.xls` o `.xlsx`).
+- Vista previa antes de guardar: periodo, días, tickets, ingresos, local y delivery.
+- Actualización por fecha sin duplicar las ventas existentes.
+- Cuatro bandejas de facturas: delivery, caja chica, cuenta bancaria y tarjeta de crédito.
+- Historial de facturas y descarga de los documentos originales.
+- P&G por rango de fechas con ingresos, gastos, utilidad y margen.
 
-En el primer inicio, la aplicación solicita crear la cuenta administradora. El administrador puede crear usuarios de consulta y cargar un PDF diario. Si vuelve a cargar la misma fecha, el registro se actualiza sin duplicarse.
+## Carga del Excel mensual
 
-En producción, configure `DATABASE_URL` en los secretos de Streamlit con la conexión Session pooler de Supabase. Sin ese secreto, la aplicación utiliza SQLite únicamente para desarrollo local.
+En **Cargar ventas**, abre la pestaña **Excel mensual de ingresos**, selecciona el archivo original de SMARTCORP y revisa el resumen. Las filas identificadas como gastos no se suman a los ingresos, porque los egresos se obtienen de las facturas cargadas.
 
-## Segunda etapa
+Si una fecha ya existe, sus totales diarios se actualizan. Así se puede volver a cargar un mes corregido sin crear días duplicados.
 
-La base ya incluye una tabla de gastos para incorporar el P&G: ingresos, costo de ventas, gastos operativos, utilidad y márgenes.
-# Toma Tu Maduro - ventas y P&G
+## Configuración
 
-Aplicación Streamlit con usuarios, carga de cierres SMARTCORP, histórico de ventas y estado de pérdidas y ganancias.
-
-## Segunda etapa
-
-- Cuatro bandejas de facturas: plataformas, caja chica, cuenta bancaria y tarjeta de crédito.
-- Lectura automática de fecha, proveedor, número, subtotal, IVA y total.
-- Prevención de documentos duplicados mediante huella digital.
-- Corrección manual de fecha, categoría y valor.
-- Registro de gastos sin factura.
-- P&G por rango de fechas, comparación con el periodo anterior e histórico mensual.
-- Descarga del PDF original y exportación de tablas a CSV.
-
-Los documentos y sus datos se almacenan en la misma base PostgreSQL/Supabase configurada mediante Streamlit Secrets.
+Instala las dependencias con `requirements.txt` y ejecuta `app.py`. En Streamlit Community Cloud, la conexión PostgreSQL/Supabase se configura mediante los secretos de la aplicación.

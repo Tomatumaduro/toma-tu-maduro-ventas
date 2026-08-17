@@ -8,6 +8,7 @@ from .auth import create_user, set_user_active
 from .database import connect, is_integrity_error
 from .parser import parse_smartcorp_pdf
 from .invoice_parser import parse_invoice_pdf
+from .sales_excel_parser import parse_smartcorp_sales_excel
 
 
 DAY_NAMES = {0:"lunes",1:"martes",2:"miércoles",3:"jueves",4:"viernes",5:"sábado",6:"domingo"}
@@ -69,11 +70,74 @@ def render_dashboard():
     st.download_button("Descargar detalle CSV", show.to_csv(index=False).encode("utf-8-sig"), "ventas_toma_tu_maduro.csv", "text/csv")
 
 
+def _upsert_sales_row(con, row):
+    cols = list(row)
+    updates = ",".join(f"{col}=excluded.{col}" for col in cols if col != "sale_date")
+    con.execute(
+        f"INSERT INTO daily_sales ({','.join(cols)}) "
+        f"VALUES ({','.join('?' for _ in cols)}) "
+        f"ON CONFLICT(sale_date) DO UPDATE SET {updates}",
+        tuple(row.values()),
+    )
+
+
 def render_upload():
     st.markdown('<h1 class="ttm-title">Cargar reportes</h1>', unsafe_allow_html=True)
-    st.write("Sube el cierre diario tal como lo genera SMARTCORP. Si esa fecha ya existe, se actualizará sin duplicarla.")
-    file = st.file_uploader("Seleccionar PDF diario", type=["pdf"], accept_multiple_files=False)
-    if file and st.button("Procesar PDF", type="primary"):
+    st.write("Carga las ventas de SMARTCORP. Si una fecha ya existe, se actualizará sin duplicarla.")
+    excel_tab, pdf_tab = st.tabs(["Excel mensual de ingresos", "PDF diario"])
+
+    with excel_tab:
+        st.caption("Recomendado para cuadrar un mes completo, como julio.")
+        excel_file = st.file_uploader(
+            "Seleccionar Cuadre de Caja Detallado",
+            type=["xls", "xlsx"],
+            accept_multiple_files=False,
+            key="sales_excel",
+        )
+        if excel_file:
+            try:
+                excel_rows, metadata = parse_smartcorp_sales_excel(
+                    excel_file.getvalue(), excel_file.name
+                )
+                metrics = st.columns(4)
+                metrics[0].metric("Periodo", f"{metadata['start_date']} a {metadata['end_date']}")
+                metrics[1].metric("Ingresos", f"${metadata['total_sales']:,.2f}")
+                metrics[2].metric("Tickets", f"{metadata['tickets']:,}")
+                metrics[3].metric("Días con ventas", metadata["days"])
+                st.dataframe(
+                    pd.DataFrame(excel_rows)[
+                        ["sale_date", "total_sales", "tickets", "local_sales", "delivery_sales"]
+                    ],
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "sale_date": st.column_config.DateColumn("Fecha"),
+                        "total_sales": st.column_config.NumberColumn("Venta total", format="$%.2f"),
+                        "tickets": "Tickets",
+                        "local_sales": st.column_config.NumberColumn("Local", format="$%.2f"),
+                        "delivery_sales": st.column_config.NumberColumn("Delivery", format="$%.2f"),
+                    },
+                )
+                if metadata["excluded_expenses"]:
+                    st.info(
+                        f"Se excluyeron {metadata['excluded_expenses']} filas marcadas como Gasto "
+                        f"(${metadata['excluded_expense_total']:,.2f}); no se contaron como ingresos."
+                    )
+                if st.button("Guardar ingresos del Excel", type="primary"):
+                    with connect() as con:
+                        for excel_row in excel_rows:
+                            _upsert_sales_row(con, excel_row)
+                    st.success(
+                        f"Ingresos guardados: {metadata['days']} días, "
+                        f"{metadata['tickets']} tickets y ${metadata['total_sales']:,.2f}."
+                    )
+            except Exception as exc:
+                st.error(f"{excel_file.name}: {exc}")
+
+    with pdf_tab:
+        file = st.file_uploader("Seleccionar PDF diario", type=["pdf"], accept_multiple_files=False)
+        process_pdf = file and st.button("Procesar PDF", type="primary")
+    if process_pdf:
         imported, errors = 0, []
         try:
             row = parse_smartcorp_pdf(file.getvalue(), file.name)
@@ -89,10 +153,8 @@ def render_upload():
                 else:
                     consolidated_products[key] = product.copy()
             products = list(consolidated_products.values())
-            cols = list(row)
             with connect() as con:
-                updates = ",".join(f"{col}=excluded.{col}" for col in cols if col != "sale_date")
-                con.execute(f"INSERT INTO daily_sales ({','.join(cols)}) VALUES ({','.join('?' for _ in cols)}) ON CONFLICT(sale_date) DO UPDATE SET {updates}", tuple(row.values()))
+                _upsert_sales_row(con, row)
                 con.execute("DELETE FROM product_sales WHERE sale_date=?", (row["sale_date"],))
                 con.executemany(
                     """INSERT INTO product_sales(
@@ -252,7 +314,7 @@ def render_profit_loss():
     previous_expenses = 0.0
     if not invoices.empty:
         previous_expenses += float(invoices[(invoices.invoice_date.dt.date >= previous_start) & (invoices.invoice_date.dt.date <= previous_end)].total.sum())
-    if not manual_rows == []:
+    if manual_rows:
         all_manual = pd.DataFrame([dict(row) for row in manual_rows])
         if not all_manual.empty:
             all_manual["expense_date"] = pd.to_datetime(all_manual.expense_date)
@@ -294,10 +356,11 @@ def render_profit_loss():
     if monthly_parts:
         monthly = pd.concat(monthly_parts, axis=1).fillna(0).reset_index()
         for col in ["Ingresos", "Gastos_facturas", "Gastos_manuales"]:
-            if col in monthly.columns:
-                monthly[col] = pd.to_numeric(monthly[col], errors="coerce").fillna(0.0)
-        monthly["Gastos"] = monthly.get("Gastos_facturas", 0) + monthly.get("Gastos_manuales", 0)
-        monthly["Utilidad"] = monthly.get("Ingresos", 0) - monthly["Gastos"]
+            if col not in monthly.columns:
+                monthly[col] = 0.0
+            monthly[col] = pd.to_numeric(monthly[col], errors="coerce").fillna(0.0)
+        monthly["Gastos"] = monthly["Gastos_facturas"] + monthly["Gastos_manuales"]
+        monthly["Utilidad"] = monthly["Ingresos"] - monthly["Gastos"]
         st.subheader("Historial mensual")
         st.dataframe(monthly[["Mes","Ingresos","Gastos","Utilidad"]].sort_values("Mes", ascending=False), use_container_width=True, hide_index=True, column_config={c:st.column_config.NumberColumn(format="$%.2f") for c in ["Ingresos","Gastos","Utilidad"]})
     summary = pd.DataFrame([{"Concepto":"Ingresos","Valor":income},{"Concepto":"Gastos","Valor":expenses},{"Concepto":"Utilidad / pérdida","Valor":profit},{"Concepto":"Margen %","Valor":margin}])
